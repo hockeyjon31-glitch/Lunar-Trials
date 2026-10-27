@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<linker>
+  <!--
+    WebGL IL2CPP builds strip engine types no managed code references directly.
+    GameObject.CreatePrimitive(PrimitiveType.Cylinder) and PrimitiveType.Capsule
+    add a CapsuleCollider internally; without this preserve rule every cylinder
+    the game spawns (meteor target rings, lakes, lava pools, beacon pads, pylons)
+    fails at runtime with "Can't add component because class 'CapsuleCollider'
+    doesn't exist!" and the meteor storm warning never paints.
+  -->
+  <assembly fullname="UnityEngine.PhysicsModule">
+    <type fullname="UnityEngine.CapsuleCollider" preserve="all" />
+  </assembly>
+</linker>

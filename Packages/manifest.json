@@ -2,7 +2,9 @@
   "dependencies": {
     "com.unity.collab-proxy": "2.13.6",
     "com.unity.feature.development": "1.0.2",
-    "com.unity.inputsystem": "1.20.0",
+    "io.newgrounds.unity": "file:io.newgrounds.unity",
+    "com.unity.nuget.newtonsoft-json": "3.2.1",
+    "com.unity.textmeshpro": "3.2.0-pre.11",
     "com.unity.multiplayer.center": "1.0.1",
     "com.unity.timeline": "1.8.13",
     "com.unity.ugui": "2.5.0",
@@ -43,3 +45,4 @@
     "com.unity.modules.xr": "1.0.0"
   }
 }
+

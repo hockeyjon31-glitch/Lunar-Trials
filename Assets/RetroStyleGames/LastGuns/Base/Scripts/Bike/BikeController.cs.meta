@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 8c8cbebdac7310949b1fc4418b166f04
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 395194
+  packageName: Bike Free
+  packageVersion: 1.0
+  assetPath: Assets/RetroStyleGames/LastGuns/Base/Scripts/Bike/BikeController.cs
+  uploadId: 963634

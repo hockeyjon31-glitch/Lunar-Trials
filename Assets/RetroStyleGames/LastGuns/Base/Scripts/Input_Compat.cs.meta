@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: 8a3044821384b5140955d84ba4b5d616
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 395194
+  packageName: Bike Free
+  packageVersion: 1.0
+  assetPath: Assets/RetroStyleGames/LastGuns/Base/Scripts/Input_Compat.cs
+  uploadId: 963634
