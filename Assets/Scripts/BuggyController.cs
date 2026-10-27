@@ -811,7 +811,8 @@ public class BuggyController : MonoBehaviour
                 rb.angularVelocity = rb.angularVelocity * Mathf.Pow(dampFactor, Time.fixedDeltaTime * 60f);
 
                 // Clamp input to prevent infinite spin
-                Vector3 aerialInput = new Vector3(DrivingInput.AirRoll, 0f, DrivingInput.AirPitch);
+                // Up/Down = pitch (forward/back flip), Left/Right = roll (barrel roll)
+                Vector3 aerialInput = new Vector3(DrivingInput.AirPitch, 0f, DrivingInput.AirRoll);
                 aerialInput = Vector3.ClampMagnitude(aerialInput, 1f);
 
                 // Apply torque in LOCAL space, scaled by mass for consistency
