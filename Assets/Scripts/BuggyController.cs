@@ -262,25 +262,34 @@ public class BuggyController : MonoBehaviour
             "up, Down leans it down - for landing ramps and rock tops flat. Engages only after " +
             "a real beat of airtime (tiny crest bounces never trigger it), eases in, and the " +
             "spin is capped so a held key can never wind an unrealistic spin.")]
-    public float trialsAirPitchTorque = 28f;
+    public float trialsAirPitchTorque = 24f;
     [Tooltip("Roll torque while airborne, from the CURSOR Left/Right keys - the side-flip " +
             "control (barrel rolls and mid-air landing correction). Same airtime gate and " +
             "spin cap as the pitch control.")]
-    public float trialsAirRollTorque = 28f;
+    public float trialsAirRollTorque = 24f;
     [Tooltip("Total spin cap (rad/s) while air-flipping: lower for easier, more controllable " +
             "flips while tuning (held flips complete a loop slower and with more room to correct).")]
-    public float trialsAirSpinCap = 8.0f;
-    [Tooltip("Flip COMMIT seconds: once a flip genuinely engages, flip control stays live " +
-            "this long and rides out brief wheel-graze flickers (pitch flips rotate through " +
-            "the wheels-down attitude while still low over the ramp, which used to cut the " +
-            "control off mid-rotation). A real landing of ~0.12 s cancels it instantly.")]
+    public float trialsAirSpinCap = 7.0f;
+    [Tooltip("Flip COMMIT seconds: once a flip engages, the commit holds for the whole jump and " +
+            "only WHEEL-CONTACT time spends it, so a brief wheel graze (pitch flips sweep through " +
+            "the wheels-down attitude low over the ramp) cannot cut the control off. The commit " +
+            "also keeps the upright assist stood down until the buggy really lands (0.15 s of " +
+            "continuous ground contact cancels it). The commit never applies torque by itself: " +
+            "torque follows the keys being held right now.")]
     public float trialsFlipCommitSeconds = 1.0f;
+    [Tooltip("Reversal strength: braking against an existing spin (pressing the OPPOSITE key) is " +
+            "this many times stronger than spinning up, so changing direction is crisp instead of " +
+            "a long fight against the momentum. 1 = symmetric.")]
+    public float trialsAirCounterBoost = 2.0f;
+    [Tooltip("Engine angular damping (1/s) while airborne in the Trials edition. The ground value " +
+            "returns the moment a wheel touches down. Kept low so flips carry momentum; the " +
+            "fade-out after you let go is governed by trialsAirAngularDrag.")]
+    public float trialsAirEngineDamping = 0.15f;
 
-    private float flipLatch;        // committed flip-control seconds remaining
-    private float flipEaseT;        // seconds since the current flip started (torque ease-in)
-    private Vector3 flipAxis = Vector3.right; // world-fixed flip axis for the current flip
-    private float flipSign;         // locked rotation sense for the current flip (+/-)
-    private float groundedStreak;   // continuous grounded seconds (cancels the latch)
+    private float flipLatch;        // >0 once a flip has engaged this jump; only wheel contact spends it
+    private Vector3 flipAxis = Vector3.right; // axis the pilot is driving right now (debug overlay)
+    private float groundedStreak;   // continuous grounded seconds (a real landing cancels the latch)
+    private float groundAngularDamping = -1f; // the Rigidbody's ground damping, captured once
 
     [Header("Trials airtime & landing")]
     [Tooltip("Extra upward kick (m/s) added the moment the buggy leaves a RAMP, scaled by speed. "
@@ -549,9 +558,6 @@ public class BuggyController : MonoBehaviour
         // Centre of mass is a per-vehicle height (VehicleSystem.comHeight): the wheeled rovers sit
         // at the stock -0.15, while the Favonius is ballasted lower to settle its tall wingsail.
         rb.centerOfMass = new Vector3(0f, VehicleSystem.ComHeight, 0f);
-        // Give the rigidbody a more predictable rotational resistance in the air
-        rb.inertiaTensor = Vector3.one * rb.mass * 0.12f;
-        rb.inertiaTensorRotation = Quaternion.identity;
         BoostAmount = maxBoost;
 
         // Airtime tricks announce themselves the moment they are earned. The score only banks
@@ -796,43 +802,86 @@ public class BuggyController : MonoBehaviour
 
         // Trials edition: AIR FLIP CONTROL on the CURSOR KEYS - Up/Down pitch the nose,
         // Left/Right roll (side flips). WASD stays pure ground driving.
+        //
+        // HOW IT WORKS NOW (the old version spun on after the key was released and was slow to
+        // reverse - see the notes below):
+        //   * TORQUE FOLLOWS THE KEYS HELD THIS STEP. The commit latch only decides whether flip
+        //     control is ALLOWED (it rides out wheel-graze flickers); it never pushes the buggy by
+        //     itself, so letting go of a key stops driving the spin immediately.
+        //   * Each held axis chases a target spin rate (key * trialsAirSpinCap). Spinning up uses
+        //     trialsAir*Torque (rad/s^2); pressing the OPPOSITE key brakes trialsAirCounterBoost
+        //     times harder, with no ease-in, so a reversal is crisp.
+        //   * Pitch and roll are independent, so both keys together give a combined spin.
+        //   * The axes are the take-off heading's right/forward - the same ground-locked axes the
+        //     trick scoring accumulates about, so what you drive is what gets scored. The
+        //     direction mapping is unchanged from before (Up = +pitch about the right axis,
+        //     Left = +roll about the forward axis): flip a sign in DrivingInput if one reads reversed.
+        //   * One damping model in the air: low engine damping, plus trialsAirAngularDrag on any
+        //     axis the pilot is not driving. (The Rigidbody's 2.5/s ground damping used to stack on
+        //     top of two more damping terms.)
+        if (GameEdition.IsTrials)
+        {
+            if (groundAngularDamping < 0f) groundAngularDamping = rb.angularDamping;
+            rb.angularDamping = (inputEnabled && IsAirborne) ? trialsAirEngineDamping : groundAngularDamping;
+        }
+
         if (GameEdition.IsTrials && inputEnabled && stallTimer <= 0f && !rb.isKinematic)
         {
-            bool allWheelsAirborne = (frontLeftWheel == null || !frontLeftWheel.isGrounded) &&
-                                     (frontRightWheel == null || !frontRightWheel.isGrounded) &&
-                                     (rearLeftWheel == null || !rearLeftWheel.isGrounded) &&
-                                     (rearRightWheel == null || !rearRightWheel.isGrounded);
+            float dt = Time.fixedDeltaTime;
+            float pitchIn = DrivingInput.AirPitch;
+            float rollIn = DrivingInput.AirRoll;
+            bool pitchHeld = Mathf.Abs(pitchIn) > 0.05f;
+            bool rollHeld = Mathf.Abs(rollIn) > 0.05f;
+            bool flipHeld = pitchHeld || rollHeld;
 
-            if (allWheelsAirborne)
+            if (IsAirborne) groundedStreak = 0f;
+            else groundedStreak += dt;
+
+            // Engaged = a real beat of airtime (tiny crest bounces never trigger it).
+            bool engaged = IsAirborne && AirborneTime > 0.12f;
+            if (flipHeld && engaged) flipLatch = trialsFlipCommitSeconds;     // arm for this jump
+            else if (!IsAirborne) flipLatch = Mathf.Max(0f, flipLatch - dt);  // only ground contact spends it
+            if (groundedStreak > 0.15f) flipLatch = 0f;                       // a real landing ends it
+
+            bool canDriveSpin = engaged || (flipLatch > 0f && groundedStreak <= 0.15f);
+            bool airSpinZone = IsAirborne || flipLatch > 0f;
+
+            // Unity clamps angular velocity to maxAngularVelocity (default 7): lift it for the whole
+            // jump so the cap is reachable and releasing a key never snaps the spin down to 7.
+            rb.maxAngularVelocity = airSpinZone ? trialsAirSpinCap + 0.5f : 7f;
+
+            if (flipHeld && canDriveSpin)
             {
-                // Exponential angular damping for snappy counter-inputs
-                float inputMag = Mathf.Abs(DrivingInput.AirPitch) + Mathf.Abs(DrivingInput.AirRoll);
-                float dampFactor = Mathf.Lerp(0.92f, 0.98f, Mathf.Clamp01(inputMag));
-                rb.angularVelocity = rb.angularVelocity * Mathf.Pow(dampFactor, Time.fixedDeltaTime * 60f);
+                float yawRad = (airPhase ? takeoffYaw : GroundHeadingYaw()) * Mathf.Deg2Rad;
+                Vector3 pitchAxis = new Vector3(Mathf.Cos(yawRad), 0f, -Mathf.Sin(yawRad));
+                Vector3 rollAxis = new Vector3(Mathf.Sin(yawRad), 0f, Mathf.Cos(yawRad));
+                flipAxis = (pitchHeld && (!rollHeld || Mathf.Abs(pitchIn) >= Mathf.Abs(rollIn))) ? pitchAxis : rollAxis;
 
-                // Clamp input to prevent infinite spin
-                // Up/Down = pitch (forward/back flip), Left/Right = roll (barrel roll)
-                Vector3 aerialInput = new Vector3(DrivingInput.AirPitch, 0f, DrivingInput.AirRoll);
-                aerialInput = Vector3.ClampMagnitude(aerialInput, 1f);
+                Vector3 av = rb.angularVelocity;
+                float wPitch = Vector3.Dot(av, pitchAxis);
+                float wRoll = Vector3.Dot(av, rollAxis);
 
-                // Apply torque in LOCAL space, scaled by mass for consistency
-                if (aerialInput.sqrMagnitude > 0.0001f)
-                {
-                    float aerialTorque = 8f * rb.mass;
-                    rb.AddRelativeTorque(aerialInput * aerialTorque, ForceMode.Force);
-                }
+                if (pitchHeld)
+                    av += pitchAxis * (ApproachSpin(wPitch, pitchIn * trialsAirSpinCap, trialsAirPitchTorque, dt) - wPitch);
+                if (rollHeld)
+                    av += rollAxis * (ApproachSpin(wRoll, rollIn * trialsAirSpinCap, trialsAirRollTorque, dt) - wRoll);
 
-                rb.angularVelocity = Vector3.ClampMagnitude(rb.angularVelocity, 15f);
-                rb.maxAngularVelocity = 15f;
+                // The axis the pilot is NOT driving fades out, so a leftover roll does not
+                // linger while you pitch (and vice versa).
+                float drag = Mathf.Clamp01(trialsAirAngularDrag * dt);
+                if (!pitchHeld) av -= pitchAxis * (Vector3.Dot(av, pitchAxis) * drag);
+                if (!rollHeld) av -= rollAxis * (Vector3.Dot(av, rollAxis) * drag);
+
+                if (av.sqrMagnitude > trialsAirSpinCap * trialsAirSpinCap)
+                    av = av.normalized * trialsAirSpinCap;
+                rb.angularVelocity = av;
             }
-            else
+            else if (IsAirborne && AirborneTime > 0.25f)
             {
-                rb.maxAngularVelocity = 7f;
+                // No flip key held: the spin fades at trialsAirAngularDrag (1/s), so a released
+                // flip coasts a little and settles, and the opposite key stops it quickly.
+                rb.angularVelocity *= Mathf.Clamp01(1f - trialsAirAngularDrag * dt);
             }
-        }
-        else if (rb != null)
-        {
-            rb.maxAngularVelocity = 7f;
         }
 
         // Reverse grip: while the player is actively backing up (or the rover is still sliding
@@ -1043,6 +1092,15 @@ public class BuggyController : MonoBehaviour
         return Mathf.Sqrt(2f * g * apex);
     }
 
+    /// <summary>One step of a spin-rate change toward a target. Spinning up uses the plain rate;
+    /// braking against an existing spin (the opposite key) uses trialsAirCounterBoost times it.</summary>
+    private float ApproachSpin(float current, float target, float spinUpRate, float dt)
+    {
+        bool opposing = Mathf.Abs(current) > 0.5f && Mathf.Sign(current) != Mathf.Sign(target);
+        float rate = spinUpRate * (opposing ? Mathf.Max(1f, trialsAirCounterBoost) : 1f);
+        return Mathf.MoveTowards(current, target, rate * dt);
+    }
+
     // Rolls the buggy back toward upright, but gently enough that a fast slide onto two wheels
     // can still go right over. Past horizontal it pushes harder to FINISH the tumble and land on
     // the wheels again; only all-but-fully-inverted does it stand up outright. The intent is that
@@ -1178,7 +1236,9 @@ public class BuggyController : MonoBehaviour
 
             // Aerodynamic rotational damping only when the pilot is NOT driving the spin, so a
             // held flip keeps its authority while a released one settles.
-            if (!FlipControlActive && trialsAirAngularDamping > 0f)
+            // (The Trials edition owns its air damping in FixedUpdate - trialsAirAngularDrag - so this
+            // older term would stack on top of it.)
+            if (!FlipControlActive && trialsAirAngularDamping > 0f && !GameEdition.IsTrials)
                 rb.angularVelocity *= 1f / (1f + trialsAirAngularDamping * dt);
 
             Stunts.Evaluate(AccumulatedPitchDeg, AccumulatedRollDeg, AccumulatedYawDeg, airRunTime);
